@@ -1,6 +1,7 @@
 import { useAppState } from '../../context/AppContext';
 import TabBar from '../common/TabBar';
 import FinancialTabContent from '../financial/FinancialTabContent';
+import ValueChainTabContent from '../valuechain/ValueChainTabContent';
 
 const TABS = [
   { id: 'valuechain', label: '밸류체인' },
@@ -28,7 +29,7 @@ export default function CenterPanel() {
       <TabBar tabs={TABS} activeTab={activeTab} onSelect={setActiveTab} />
 
       {activeTab === 'financial' && <FinancialTabContent />}
-      {activeTab === 'valuechain' && <Placeholder label="밸류체인 시각화" />}
+      {activeTab === 'valuechain' && <ValueChainTabContent />}
       {activeTab === 'news' && <Placeholder label="뉴스" />}
       {activeTab === 'ir' && <Placeholder label="IR 자료" />}
     </main>
