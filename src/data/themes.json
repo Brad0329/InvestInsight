@@ -1,0 +1,54 @@
+{
+  "themes": [
+    {
+      "id": "hydrogen",
+      "name": "수소",
+      "description": "수소 생산·저장·운송·활용 밸류체인 전반",
+      "value_chain_stages": [
+        { "id": "production", "label": "생산", "sub": "그린/블루수소" },
+        { "id": "storage", "label": "저장/운송", "sub": "압축/액화/암모니아" },
+        { "id": "fuel_cell", "label": "연료전지", "sub": "SOFC/PEMFC" },
+        { "id": "mobility", "label": "모빌리티", "sub": "수소차/버스/선박" },
+        { "id": "power", "label": "발전/산업용", "sub": "혼소발전/제철" }
+      ],
+      "stocks": [
+        {
+          "name": "한선엔지니어링",
+          "code": "452280",
+          "corp_code": "00958451",
+          "stage_id": "fuel_cell",
+          "value_chain": "연료전지 부품 (SOFC 배관 모듈)",
+          "ir_url": "",
+          "memo": "블룸SK퓨얼셀 1차 벤더, 2021년 선정"
+        },
+        {
+          "name": "일진하이솔루스",
+          "code": "271940",
+          "corp_code": "00972503",
+          "stage_id": "storage",
+          "value_chain": "수소 저장 (Type 4 압력용기)",
+          "ir_url": "",
+          "memo": ""
+        },
+        {
+          "name": "LS머트리얼즈",
+          "code": "417200",
+          "corp_code": "01528141",
+          "stage_id": "fuel_cell",
+          "value_chain": "연료전지 부품 (탈황장치 캐니스터)",
+          "ir_url": "",
+          "memo": "자회사 LS알스코 통해 블룸SK 공급"
+        },
+        {
+          "name": "아모센스",
+          "code": "357580",
+          "corp_code": "01012987",
+          "stage_id": "fuel_cell",
+          "value_chain": "연료전지 소재 (전해질 기판)",
+          "ir_url": "",
+          "memo": ""
+        }
+      ]
+    }
+  ]
+}
