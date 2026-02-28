@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import themesData from '../data/themes.json';
+import { getThemes } from '../services/dbApi';
 
 const AppContext = createContext(null);
 
@@ -22,7 +23,24 @@ export function AppProvider({ children }) {
   const [bsnsYear, setBsnsYear] = useState(initialState.bsnsYear);
   const [reprtCode, setReprtCode] = useState(initialState.reprtCode);
 
-  const themes = themesData.themes;
+  // themes: themes.json을 폴백 초기값으로, Supabase 로드 후 갱신
+  const [themes, setThemes] = useState(themesData.themes);
+  const [themesLoading, setThemesLoading] = useState(true);
+
+  useEffect(() => {
+    getThemes()
+      .then((rows) => { if (rows?.length) setThemes(rows); })
+      .catch(() => {}) // Supabase 미설정 시 themes.json 폴백 유지
+      .finally(() => setThemesLoading(false));
+  }, []);
+
+  const refreshThemes = useCallback(() => {
+    setThemesLoading(true);
+    return getThemes()
+      .then((rows) => { if (rows?.length) setThemes(rows); })
+      .catch(() => {})
+      .finally(() => setThemesLoading(false));
+  }, []);
 
   const selectedTheme = themes.find((t) => t.id === selectedThemeId) || null;
   const selectedStock =
@@ -52,6 +70,8 @@ export function AppProvider({ children }) {
     <AppContext.Provider
       value={{
         themes,
+        themesLoading,
+        refreshThemes,
         selectedThemeId,
         selectedTheme,
         selectedStockCode,

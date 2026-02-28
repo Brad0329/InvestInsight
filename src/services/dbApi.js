@@ -160,3 +160,91 @@ export async function getNews(corpCode, limit = 20) {
   if (error) throw error;
   return data;
 }
+
+// ──────────────────────────────────────────
+// themes / theme_stocks
+// ──────────────────────────────────────────
+
+/**
+ * 모든 테마 + 소속 종목 조회
+ * AppContext 형식과 호환되는 구조로 반환:
+ *   [{ id, name, description, value_chain_stages, stocks: [{name, code, corp_code, ...}] }]
+ */
+export async function getThemes() {
+  const { data: themes, error: tErr } = await supabase
+    .from('themes')
+    .select('*')
+    .order('created_at');
+  if (tErr) throw tErr;
+
+  const { data: stocks, error: sErr } = await supabase
+    .from('theme_stocks')
+    .select('*')
+    .order('created_at');
+  if (sErr) throw sErr;
+
+  return themes.map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description || '',
+    value_chain_stages: Array.isArray(t.stages) ? t.stages : [],
+    stocks: stocks
+      .filter((s) => s.theme_id === t.id)
+      .map((s) => ({
+        name: s.corp_name || s.corp_code,
+        code: s.stock_code || '',
+        corp_code: s.corp_code,
+        stage_id: s.stage_id || '',
+        value_chain: s.value_chain || '',
+        ir_url: s.ir_url || '',
+        memo: s.memo || '',
+      })),
+  }));
+}
+
+/** 테마 추가/수정 */
+export async function upsertTheme({ id, name, description, stages }) {
+  const { error } = await supabase
+    .from('themes')
+    .upsert(
+      { id, name, description, stages, updated_at: new Date().toISOString() },
+      { onConflict: 'id' }
+    );
+  if (error) throw error;
+}
+
+/** 테마 삭제 (CASCADE → theme_stocks 자동 삭제) */
+export async function deleteTheme(themeId) {
+  const { error } = await supabase.from('themes').delete().eq('id', themeId);
+  if (error) throw error;
+}
+
+/** 테마 종목 추가/수정 */
+export async function upsertThemeStock({
+  theme_id,
+  corp_code,
+  corp_name,
+  stock_code,
+  stage_id,
+  value_chain,
+  ir_url,
+  memo,
+}) {
+  const { error } = await supabase
+    .from('theme_stocks')
+    .upsert(
+      { theme_id, corp_code, corp_name, stock_code, stage_id, value_chain, ir_url, memo },
+      { onConflict: 'theme_id,corp_code' }
+    );
+  if (error) throw error;
+}
+
+/** 테마 종목 삭제 */
+export async function deleteThemeStock(themeId, corpCode) {
+  const { error } = await supabase
+    .from('theme_stocks')
+    .delete()
+    .eq('theme_id', themeId)
+    .eq('corp_code', corpCode);
+  if (error) throw error;
+}
