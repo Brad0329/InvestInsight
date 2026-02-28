@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useAppState } from '../../context/AppContext';
 import { useDartData } from '../../hooks/useDartData';
+import { useAutoCollect } from '../../hooks/useAutoCollect';
 import { filterByStatementType, formatBillion, REPORT_CODE_NAMES } from '../../services/dartApi';
 import FinancialTable from './FinancialTable';
+
+const yearOptions = Array.from({ length: 5 }, (_, i) => String(new Date().getFullYear() - 1 - i));
+const reportOptions = Object.entries(REPORT_CODE_NAMES).map(([code, name]) => ({ code, name }));
 
 const SUB_TABS = [
   { id: 'BS', label: '재무상태표' },
@@ -10,10 +14,17 @@ const SUB_TABS = [
 ];
 
 export default function FinancialTabContent() {
-  const { selectedCorpCode, selectedStock, bsnsYear, reprtCode } = useAppState();
+  const { selectedCorpCode, selectedStock, bsnsYear, reprtCode, setBsnsYear, setReprtCode } = useAppState();
   const { companyInfo, financials, keyMetrics, loading, error, fetchCompanyInfo, fetchFinancials } =
     useDartData(selectedCorpCode);
   const [subTab, setSubTab] = useState('BS');
+
+  // 종목 선택 시 최신 사업보고서 백그라운드 수집 → DB 저장
+  useAutoCollect({
+    corpCode: selectedCorpCode,
+    stockCode: selectedStock?.code,
+    companyInfo,
+  });
 
   // 종목 변경 시 기업 개황 + 재무제표 자동 조회
   useEffect(() => {
@@ -62,7 +73,6 @@ export default function FinancialTabContent() {
   const list = financials?.list || [];
   let filteredItems;
   if (subTab === 'IS') {
-    // IS(손익계산서) 또는 CIS(포괄손익계산서) - 회사마다 다름
     filteredItems = filterByStatementType(list, 'IS');
     if (filteredItems.length === 0) {
       filteredItems = filterByStatementType(list, 'CIS');
@@ -75,16 +85,40 @@ export default function FinancialTabContent() {
     <div className="flex-1 overflow-y-auto p-6">
       {/* 기업 요약 헤더 */}
       <div className="mb-6">
-        <div className="flex items-baseline gap-3 mb-1">
-          <h2 className="text-xl font-bold text-slate-900">
-            {selectedStock?.name || companyInfo?.corp_name || ''}
-          </h2>
-          <span className="text-sm text-slate-400">{selectedStock?.code}</span>
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div>
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-xl font-bold text-slate-900">
+                {selectedStock?.name || companyInfo?.corp_name || ''}
+              </h2>
+              <span className="text-sm text-slate-400">{selectedStock?.code}</span>
+            </div>
+            {selectedStock?.value_chain && (
+              <p className="text-xs text-slate-500 mt-0.5">{selectedStock.value_chain}</p>
+            )}
+          </div>
+          {/* 조회 기간 선택 */}
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={bsnsYear}
+              onChange={(e) => setBsnsYear(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+            >
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>{y}년</option>
+              ))}
+            </select>
+            <select
+              value={reprtCode}
+              onChange={(e) => setReprtCode(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+            >
+              {reportOptions.map((opt) => (
+                <option key={opt.code} value={opt.code}>{opt.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        <p className="text-sm text-slate-500">
-          {bsnsYear}년 {REPORT_CODE_NAMES[reprtCode] || ''}
-          {selectedStock?.value_chain && ` · ${selectedStock.value_chain}`}
-        </p>
       </div>
 
       {/* 주요 지표 카드 */}

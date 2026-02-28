@@ -1,13 +1,5 @@
 import { Link } from 'react-router-dom';
 import { useAppState } from '../../context/AppContext';
-import { REPORT_CODES, REPORT_CODE_NAMES } from '../../services/dartApi';
-
-const yearOptions = Array.from({ length: 5 }, (_, i) => String(new Date().getFullYear() - 1 - i));
-
-const reportOptions = Object.entries(REPORT_CODE_NAMES).map(([code, name]) => ({
-  code,
-  name,
-}));
 
 export default function LeftPanel() {
   const {
@@ -15,12 +7,8 @@ export default function LeftPanel() {
     selectedThemeId,
     selectedTheme,
     selectedStockCode,
-    bsnsYear,
-    reprtCode,
     selectTheme,
     selectStock,
-    setBsnsYear,
-    setReprtCode,
   } = useAppState();
 
   return (
@@ -71,37 +59,6 @@ export default function LeftPanel() {
               <div className="text-xs text-slate-400 mt-0.5">{stock.value_chain}</div>
             </button>
           ))}
-        </div>
-      )}
-
-      {/* 기간 선택 */}
-      {selectedStockCode && (
-        <div className="px-3 pb-3 space-y-2 text-sm border-t border-slate-100 pt-3">
-          <div className="px-2 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            조회 기간
-          </div>
-          <select
-            value={bsnsYear}
-            onChange={(e) => setBsnsYear(e.target.value)}
-            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-          >
-            {yearOptions.map((y) => (
-              <option key={y} value={y}>
-                {y}년
-              </option>
-            ))}
-          </select>
-          <select
-            value={reprtCode}
-            onChange={(e) => setReprtCode(e.target.value)}
-            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-          >
-            {reportOptions.map((opt) => (
-              <option key={opt.code} value={opt.code}>
-                {opt.name}
-              </option>
-            ))}
-          </select>
         </div>
       )}
 

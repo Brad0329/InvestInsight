@@ -10,6 +10,7 @@
   },
   "description": "테마 투자 분석 웹앱",
   "dependencies": {
+    "@supabase/supabase-js": "^2.98.0",
     "mermaid": "^11.12.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

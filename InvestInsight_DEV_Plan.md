@@ -379,26 +379,201 @@ const AI_CONFIGS = {
 
 ---
 
-## 10. Phase 5 — 뉴스 · 공시 · IR
+## 10. Phase 5 — DB 구축 · 공시/뉴스 수집 · UI
 
-> 목표: 뉴스 탭(네이버 뉴스 + DART 공시) 및 IR 탭 구현
+> 목표: Supabase DB 구축, 사업보고서 파싱·저장, 뉴스 수집, 뉴스·공시·IR 탭 UI 구현
+
+### 배경 및 설계 원칙
+
+| 항목 | 결정 |
+|------|------|
+| DB | Supabase (PostgreSQL + pgvector + Storage) |
+| 저장 대상 | 공시 조회된 종목만 On-demand 저장 (전체 상장사 사전 수집 X) |
+| AI 사용 시점 | DB **저장 시** AI 없음 — 규칙 기반 파싱만 사용 / **조회 시**에만 AI 사용 |
+| 텍스트 압축 | PostgreSQL TOAST 자동 처리 (별도 설정 불필요) |
+| 벡터 임베딩 | content TEXT로 먼저 저장 → Phase 6에서 embedding 컬럼 추가 |
+| 파티셔닝 | 현 규모(수십만 rows)에서 불필요 → B-tree 인덱스로 충분 |
+
+### DB 스키마
+
+```sql
+-- 기업 마스터
+CREATE TABLE companies (
+  corp_code   TEXT PRIMARY KEY,  -- DART 기업코드
+  corp_name   TEXT NOT NULL,
+  stock_code  TEXT,
+  market      TEXT,              -- KOSPI / KOSDAQ
+  sector      TEXT,
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- 보고서 메타
+CREATE TABLE reports (
+  id          BIGSERIAL PRIMARY KEY,
+  corp_code   TEXT REFERENCES companies(corp_code),
+  rcpno       TEXT UNIQUE NOT NULL,  -- DART 접수번호
+  report_type TEXT,                  -- 사업/반기/분기보고서
+  bsns_year   TEXT,                  -- 사업연도
+  filed_at    DATE,
+  raw_file_url TEXT,                 -- Supabase Storage URL (원본 XML)
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- 재무제표 수치 (구조화)
+CREATE TABLE financials (
+  id            BIGSERIAL PRIMARY KEY,
+  report_id     BIGINT REFERENCES reports(id),
+  fs_div        TEXT,   -- OFS(별도) / CFS(연결)
+  sj_div        TEXT,   -- BS / IS / CIS / CF
+  account_id    TEXT,
+  account_nm    TEXT,
+  curr_amount   BIGINT, -- 당기
+  prev_amount   BIGINT, -- 전기
+  prev2_amount  BIGINT  -- 전전기
+);
+
+-- 사업부문별 매출 (구조화)
+CREATE TABLE segment_revenues (
+  id            BIGSERIAL PRIMARY KEY,
+  report_id     BIGINT REFERENCES reports(id),
+  segment_name  TEXT,
+  revenue       BIGINT,
+  op_income     BIGINT,
+  ratio         NUMERIC(5,2),
+  bsns_year     TEXT
+);
+
+-- 생산능력 / 가동률 (구조화)
+CREATE TABLE production_stats (
+  id                BIGSERIAL PRIMARY KEY,
+  report_id         BIGINT REFERENCES reports(id),
+  product_name      TEXT,
+  capacity          BIGINT,
+  output            BIGINT,
+  utilization_rate  NUMERIC(5,2),
+  bsns_year         TEXT
+);
+
+-- 원재료 가격 (구조화)
+CREATE TABLE raw_material_prices (
+  id                  BIGSERIAL PRIMARY KEY,
+  report_id           BIGINT REFERENCES reports(id),
+  material_name       TEXT,
+  unit                TEXT,
+  price_curr          NUMERIC,
+  price_prev          NUMERIC,
+  price_change_pct    NUMERIC(5,2)
+);
+
+-- 수주잔고 (구조화)
+CREATE TABLE order_backlogs (
+  id               BIGSERIAL PRIMARY KEY,
+  report_id        BIGINT REFERENCES reports(id),
+  product_name     TEXT,
+  contract_amount  BIGINT,
+  backlog_amount   BIGINT,
+  as_of_date       DATE
+);
+
+-- R&D 현황 (구조화)
+CREATE TABLE rd_expenses (
+  id                  BIGSERIAL PRIMARY KEY,
+  report_id           BIGINT REFERENCES reports(id),
+  total_rd_cost       BIGINT,
+  rd_to_sales_ratio   NUMERIC(5,2),
+  key_projects        JSONB   -- [{ name, status, expected_date }]
+);
+
+-- 비정형 텍스트 섹션 (RAG용)
+CREATE TABLE report_sections (
+  id           BIGSERIAL PRIMARY KEY,
+  report_id    BIGINT REFERENCES reports(id),
+  section_key  TEXT,   -- 'business_overview' | 'products_services' | 'market_competition'
+                        -- 'risk_factors' | 'rd_pipeline' | 'management_strategy' | 'related_party'
+  content      TEXT,   -- HTML 태그 제거한 원문 텍스트
+  -- embedding vector(1536)  ← Phase 6에서 추가 (pgvector)
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+
+-- 뉴스 (최신 맥락)
+CREATE TABLE news_items (
+  id           BIGSERIAL PRIMARY KEY,
+  corp_code    TEXT REFERENCES companies(corp_code),
+  title        TEXT,
+  summary      TEXT,
+  published_at TIMESTAMPTZ,
+  url          TEXT,
+  source       TEXT,  -- 'naver' 등
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+
+-- 인덱스
+CREATE INDEX idx_reports_corp ON reports(corp_code);
+CREATE INDEX idx_financials_report ON financials(report_id, sj_div);
+CREATE INDEX idx_sections_report ON report_sections(report_id, section_key);
+CREATE INDEX idx_news_corp ON news_items(corp_code, published_at DESC);
+```
+
+### 사업보고서 섹션 추출 매핑
+
+| section_key | DART 보고서 섹션 | AI 활용 용도 |
+|-------------|-----------------|-------------|
+| `business_overview` | II. 사업의 내용 > 1. 사업의 개요 | 경쟁사 대비 포지셔닝 |
+| `products_services` | 2. 주요 제품 및 서비스 | 제품 믹스 변화 추론 |
+| `market_competition` | 시장 환경, 경쟁 현황 | 산업 구조 이해 |
+| `risk_factors` | 주요 위험 요인 | 투자 리스크 요약 |
+| `rd_pipeline` | 연구개발 진행 과제 서술 | 기술 경쟁력 평가 |
+| `management_strategy` | 경영진 전략 메시지 | 중장기 방향성 |
+| `related_party` | 특수관계인 거래 | 지배구조 리스크 |
 
 ### 작업 목록
 
+#### Phase 5-A: DB 인프라
+
 | # | 작업 | 상세 | 우선순위 |
 |---|------|------|---------|
-| 5-1 | 뉴스 API 서비스 모듈 | `newsApi.js` — 네이버 뉴스 검색 API 래퍼 | 🔴 |
-| 5-2 | 뉴스 탭 — 뉴스 서브탭 | 종목명 키워드 뉴스 검색 결과 리스트 표시 | 🔴 |
-| 5-3 | 뉴스 탭 — 공시 서브탭 | DART 최신 공시 목록 표시 (기존 dartApi 활용) | 🔴 |
-| 5-4 | 뉴스 카드 UI | 제목·요약·날짜·출처 카드형 레이아웃, 외부 링크 연결 | 🟡 |
-| 5-5 | IR 탭 구현 | DART `pblntf_ty=F` 기업설명회 자료 조회 | 🟡 |
-| 5-6 | IR 홈페이지 링크 | `themes.json`의 `ir_url` → 외부 링크 버튼 표시 | 🟡 |
-| 5-7 | IR 데이터 없음 처리 | IR 자료 없는 경우 섹션 숨김 또는 안내 메시지 | 🟢 |
+| 5-1 | Supabase 프로젝트 생성 | 프로젝트 생성, 환경변수 설정 (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) | 🔴 |
+| 5-2 | DB 스키마 마이그레이션 | 위 DDL 실행, 인덱스 생성 | 🔴 |
+| 5-3 | Supabase 클라이언트 설정 | `src/services/dbApi.js` — supabase-js 초기화 | 🔴 |
+
+#### Phase 5-B: 공시 파싱 · 저장
+
+| # | 작업 | 상세 | 우선순위 |
+|---|------|------|---------|
+| 5-4 | 사업보고서 원문 다운로드 | DART `document.xml` API 호출 → Supabase Storage 저장 | 🔴 |
+| 5-5 | HTML 파싱 → 구조화 테이블 | 규칙 기반 파싱: segment_revenues, production_stats, raw_material_prices 등 INSERT | 🔴 |
+| 5-6 | 섹션 텍스트 추출 | HTML 태그 제거 → report_sections INSERT | 🔴 |
+| 5-7 | On-demand 수집 훅 | 종목 조회 시 DB 미존재 → DART pull → DB 저장 → 반환 | 🟡 |
+
+#### Phase 5-C: 뉴스 수집 · UI
+
+| # | 작업 | 상세 | 우선순위 |
+|---|------|------|---------|
+| 5-8 | 뉴스 수집 → DB 저장 | 네이버 뉴스 검색 → news_items INSERT | 🔴 |
+| 5-9 | 뉴스 탭 — 뉴스 서브탭 | news_items 조회 → 카드형 리스트 표시 | 🔴 |
+| 5-10 | 뉴스 탭 — 공시 서브탭 | DART 최신 공시 목록 표시 | 🔴 |
+| 5-11 | IR 탭 구현 | DART `pblntf_ty=F` 기업설명회 자료 + IR 홈페이지 링크 | 🟡 |
+
+### 데이터 흐름
+
+```
+사용자가 종목 선택
+  └─ DB에 해당 종목 보고서 있음? ─── Yes ──→ DB에서 직접 반환
+                                  └── No ──→ DART에서 다운로드
+                                              → 규칙 기반 파싱
+                                              → DB INSERT
+                                              → 반환
+
+AI 채팅 질문 수신 (Phase 6)
+  └─ financials (수치) + report_sections (텍스트) + news_items (최신 뉴스)
+     → 컨텍스트 조합 → AI에게 전달 → 답변 생성
+```
 
 ### 산출물
-- [x] 종목별 뉴스 검색 결과 표시
-- [x] DART 공시 목록 표시
-- [x] IR 자료 표시 (있는 경우)
+- [ ] Supabase DB 스키마 생성 완료
+- [ ] 수소 테마 4종목 사업보고서 파싱·저장 성공
+- [ ] 뉴스 수집·표시 동작
+- [ ] 공시 목록·IR 탭 동작
 
 ---
 
@@ -469,7 +644,7 @@ localStorage 구조:
 | **M2 — 메인 화면** | Phase 2 | 3단 레이아웃, 테마/종목 탐색 | 테마 선택 → 종목 → 재무 플로우 |
 | **M3 — 밸류체인** | Phase 3 | 밸류체인 시각화 | 수소 테마 밸류체인 다이어그램 |
 | **M4 — AI 분석** | Phase 4 | AI 채팅, 핵심요약 | AI와 재무 데이터 기반 대화 가능 |
-| **M5 — 뉴스/IR** | Phase 5 | 뉴스·공시·IR 통합 | 뉴스 검색, 공시 목록, IR 표시 |
+| **M5 — DB+뉴스/IR** | Phase 5 | Supabase DB, 공시 파싱·저장, 뉴스·IR UI | DB 스키마 완성, 4종목 보고서 저장, 뉴스 탭 동작 |
 | **M6 — 관리 도구** | Phase 6 | 테마 관리, 설정 | 테마·종목 CRUD, API 키 관리 |
 | **M7 — 고도화** | Phase 7 | Reactflow, 종목 비교 등 | 사용성 전반 개선 |
 
@@ -552,5 +727,5 @@ export function setCache(key, data) {
 
 ---
 
-*최종 업데이트: 2026-02-27*
+*최종 업데이트: 2026-02-28*
 *기반 문서: PROJECT_CONTEXT (1).md*
